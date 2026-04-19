@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PIL import Image
 
-from app.core.base import BaseProcessor
+from app.core.base import BaseProcessor, ProgressCallback
 
 
 class CropProcessor(BaseProcessor):
+    """提供缩放与裁剪能力，统一输出 PNG。"""
+
     name = "image.crop"
     label = "裁剪/缩放"
     category = "image"
@@ -35,6 +38,7 @@ class CropProcessor(BaseProcessor):
     _POWER2_SIZES = {32, 64, 128, 256, 512, 1024}
 
     def validate(self, params: dict) -> bool:
+        """根据 mode 分发到对应校验逻辑。"""
         mode = self._mode(params)
         validator = self._validator_map().get(mode)
         if validator is None:
@@ -46,8 +50,9 @@ class CropProcessor(BaseProcessor):
         input_file: str,
         output_dir: str,
         params: dict,
-        progress_callback,
+        progress_callback: ProgressCallback,
     ) -> list[str]:
+        """执行裁剪或缩放处理。"""
         mode = self._mode(params)
         if not self.validate(params):
             raise ValueError(f"Invalid params for mode: {mode}")
@@ -65,14 +70,14 @@ class CropProcessor(BaseProcessor):
         progress_callback(100, "完成")
         return [str(output_path)]
 
-    def _validator_map(self):
+    def _validator_map(self) -> dict[str, Callable[[dict], bool]]:
         return {
             "custom": self._validate_custom,
             "power2": self._validate_power2,
             "crop": self._validate_crop,
         }
 
-    def _handler_map(self):
+    def _handler_map(self) -> dict[str, Callable[[Image.Image, dict], Image.Image]]:
         return {
             "custom": self._process_custom,
             "power2": self._process_power2,

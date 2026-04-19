@@ -7,10 +7,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from app.core.base import BaseProcessor
+from app.core.base import BaseProcessor, ProgressCallback
 
 
 class CutoutProcessor(BaseProcessor):
+    """移除图片背景并输出透明 PNG。"""
+
     name = "image.cutout"
     label = "智能抠图"
     category = "image"
@@ -23,6 +25,7 @@ class CutoutProcessor(BaseProcessor):
     }
 
     def validate(self, params: dict) -> bool:
+        """抠图处理器当前无强约束参数。"""
         return True
 
     def process(
@@ -30,8 +33,9 @@ class CutoutProcessor(BaseProcessor):
         input_file: str,
         output_dir: str,
         params: dict,
-        progress_callback,
+        progress_callback: ProgressCallback,
     ) -> list[str]:
+        """执行抠图处理。"""
         progress_callback(10, "读取图片")
         input_bytes = Path(input_file).read_bytes()
 
@@ -60,8 +64,12 @@ class CutoutProcessor(BaseProcessor):
         image.save(buffer, format="PNG")
         return buffer.getvalue()
 
-    def _remove_background(self, input_bytes: bytes, alpha_matting: bool):
-        # Some environments package pymatting in a way that breaks numba cache init.
+    def _remove_background(
+        self,
+        input_bytes: bytes,
+        alpha_matting: bool,
+    ) -> bytes | Image.Image | np.ndarray:
+        # 部分环境下 pymatting 会触发 numba 缓存初始化异常，这里降级关闭 JIT 重试。
         try:
             from rembg import remove as rembg_remove
         except RuntimeError as exc:

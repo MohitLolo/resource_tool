@@ -4,10 +4,12 @@ from pathlib import Path
 
 from PIL import Image
 
-from app.core.base import BaseProcessor
+from app.core.base import BaseProcessor, ProgressCallback
 
 
 class PixelateProcessor(BaseProcessor):
+    """将图片转换为像素风格，可选调色板与输出尺寸。"""
+
     name = "image.pixelate"
     label = "像素风转换"
     category = "image"
@@ -37,6 +39,7 @@ class PixelateProcessor(BaseProcessor):
     _OUTPUT_ALLOWED = {"original", "64x64", "128x128", "256x256"}
 
     def validate(self, params: dict) -> bool:
+        """校验像素化参数范围。"""
         pixel_size = self._as_int(params.get("pixel_size", 8))
         palette_colors = self._as_int(params.get("palette_colors", 0))
         output_size = str(params.get("output_size", "original")).lower()
@@ -54,8 +57,9 @@ class PixelateProcessor(BaseProcessor):
         input_file: str,
         output_dir: str,
         params: dict,
-        progress_callback,
+        progress_callback: ProgressCallback,
     ) -> list[str]:
+        """执行像素风转换。"""
         if not self.validate(params):
             raise ValueError("Invalid params for image.pixelate")
 

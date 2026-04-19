@@ -3,10 +3,12 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from app.core.base import BaseProcessor
+from app.core.base import BaseProcessor, ProgressCallback
 
 
 class ExtractFramesProcessor(BaseProcessor):
+    """按帧率从视频提取图片序列。"""
+
     name = "video.extract_frames"
     label = "视频截帧"
     category = "video"
@@ -37,6 +39,7 @@ class ExtractFramesProcessor(BaseProcessor):
     _FORMAT_ALLOWED = {"png", "jpg"}
 
     def validate(self, params: dict) -> bool:
+        """校验截帧参数。"""
         mode = str(params.get("mode", "all")).lower()
         fps = self._as_int(params.get("fps", 5))
         output_format = str(params.get("format", "png")).lower()
@@ -63,8 +66,9 @@ class ExtractFramesProcessor(BaseProcessor):
         input_file: str,
         output_dir: str,
         params: dict,
-        progress_callback,
+        progress_callback: ProgressCallback,
     ) -> list[str]:
+        """执行视频截帧。"""
         if not self.validate(params):
             raise ValueError("Invalid params for video.extract_frames")
         if not Path(input_file).exists():

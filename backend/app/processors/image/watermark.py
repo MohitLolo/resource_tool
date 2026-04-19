@@ -5,10 +5,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.core.base import BaseProcessor
+from app.core.base import BaseProcessor, ProgressCallback
 
 
 class WatermarkProcessor(BaseProcessor):
+    """去除图片水印，支持手动遮罩与自动检测遮罩。"""
+
     name = "image.watermark"
     label = "去水印"
     category = "image"
@@ -34,6 +36,7 @@ class WatermarkProcessor(BaseProcessor):
     }
 
     def validate(self, params: dict) -> bool:
+        """校验算法参数。"""
         algorithm = str(params.get("algorithm", "telea")).lower()
         return algorithm in {"telea", "ns"}
 
@@ -42,8 +45,9 @@ class WatermarkProcessor(BaseProcessor):
         input_file: str,
         output_dir: str,
         params: dict,
-        progress_callback,
+        progress_callback: ProgressCallback,
     ) -> list[str]:
+        """执行去水印处理。"""
         if not self.validate(params):
             raise ValueError("Invalid algorithm. Allowed values: telea, ns")
 
@@ -98,6 +102,7 @@ class WatermarkProcessor(BaseProcessor):
         return None
 
     def _auto_detect_mask(self, image: np.ndarray) -> np.ndarray:
+        # 阈值 240 更偏向识别浅色高亮水印，降低阈值会增加误检概率。
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         _, mask = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
         kernel = np.ones((3, 3), np.uint8)

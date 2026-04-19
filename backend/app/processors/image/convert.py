@@ -4,10 +4,12 @@ from pathlib import Path
 
 from PIL import Image
 
-from app.core.base import BaseProcessor
+from app.core.base import BaseProcessor, ProgressCallback
 
 
 class ConvertProcessor(BaseProcessor):
+    """转换图片输出格式，支持 png/jpg/webp。"""
+
     name = "image.convert"
     label = "格式转换"
     category = "image"
@@ -30,6 +32,7 @@ class ConvertProcessor(BaseProcessor):
     _FORMAT_ALLOWED = {"png", "jpg", "webp"}
 
     def validate(self, params: dict) -> bool:
+        """校验输出格式和质量参数。"""
         target_format = str(params.get("format", "png")).lower()
         quality = self._as_int(params.get("quality", 90))
         if target_format not in self._FORMAT_ALLOWED:
@@ -43,8 +46,9 @@ class ConvertProcessor(BaseProcessor):
         input_file: str,
         output_dir: str,
         params: dict,
-        progress_callback,
+        progress_callback: ProgressCallback,
     ) -> list[str]:
+        """执行格式转换。"""
         if not self.validate(params):
             raise ValueError("Invalid params for image.convert")
 
