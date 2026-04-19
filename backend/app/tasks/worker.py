@@ -11,6 +11,16 @@ from app.models.task import TaskStatus, task_store
 
 celery_app = Celery("gameasset", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
 redis_client = redis.Redis.from_url(settings.REDIS_URL)
+_registry_ready = False
+
+
+def ensure_registry_ready() -> None:
+    """Ensure worker process has discovered processor implementations."""
+    global _registry_ready
+    if _registry_ready:
+        return
+    ProcessorRegistry.auto_discover("app.processors")
+    _registry_ready = True
 
 
 def publish_progress(task_id: str, progress: int, message: str, status: str) -> None:
@@ -24,6 +34,7 @@ def publish_progress(task_id: str, progress: int, message: str, status: str) -> 
 
 
 def run_process_task(task_id: str) -> None:
+    ensure_registry_ready()
     task = task_store.get(task_id)
     if task is None:
         raise ValueError(f"Task not found: {task_id}")
