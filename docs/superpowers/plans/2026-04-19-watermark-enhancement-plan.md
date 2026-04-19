@@ -721,6 +721,8 @@ class WatermarkProcessor(BaseProcessor):
 
         if mode == "manual":
             mask = self._load_manual_mask(image, params)
+            if self._resolve_mask_file(params) is None:
+                progress_callback(10, "未提供遮罩，已使用自动检测")
         else:
             sensitivity = self._as_int(params.get("sensitivity", 70)) or 70
             mask = auto_detect_mask(image, sensitivity=sensitivity)
@@ -730,7 +732,7 @@ class WatermarkProcessor(BaseProcessor):
         mask = cv2.dilate(mask, kernel, iterations=1)
 
         progress_callback(30, "修复水印区域")
-        result = self._inpaint(image, mask)
+        result = self._inpaint(image, mask, progress_callback=progress_callback)
 
         output_path = Path(output_dir) / f"{Path(input_file).stem}_watermark.png"
         cv2.imwrite(str(output_path), result)
@@ -770,7 +772,7 @@ class WatermarkProcessor(BaseProcessor):
 
         return None
 
-    def _inpaint(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    def _inpaint(self, image: np.ndarray, mask: np.ndarray, progress_callback=None) -> np.ndarray:
         """使用 LaMa 修复，失败时降级到 OpenCV inpaint。"""
         if mask.max() == 0:
             return image
@@ -779,6 +781,8 @@ class WatermarkProcessor(BaseProcessor):
             lama = self._get_or_create_lama()
             return self._inpaint_lama(image, mask, lama)
         except Exception:
+            if progress_callback:
+                progress_callback(30, "已降级到基础修复模式，效果可能降低")
             return self._inpaint_opencv(image, mask)
 
     def _get_or_create_lama(self):
@@ -866,6 +870,8 @@ const naturalWidth = ref(0)
 const naturalHeight = ref(0)
 const hasMask = ref(false)
 let ctx = null
+let maskCtx = null
+let maskCanvas = null
 let imageObj = null
 
 function initCanvas() {
@@ -880,9 +886,18 @@ function initCanvas() {
     canvasHeight.value = imageObj.naturalHeight
 
     nextTick(() => {
+      // 主 canvas：显示原图 + 涂抹预览
       ctx = canvasRef.value.getContext('2d')
       ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value)
       ctx.drawImage(imageObj, 0, 0)
+
+      // 离屏 canvas：只记录涂抹轨迹（黑白遮罩），与原图分离
+      maskCanvas = document.createElement('canvas')
+      maskCanvas.width = canvasWidth.value
+      maskCanvas.height = canvasHeight.value
+      maskCtx = maskCanvas.getContext('2d')
+      maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height)
+
       hasMask.value = false
     })
   }
@@ -908,6 +923,10 @@ function startDraw(event) {
   const pos = getPos(event)
   ctx.beginPath()
   ctx.moveTo(pos.x, pos.y)
+  if (maskCtx) {
+    maskCtx.beginPath()
+    maskCtx.moveTo(pos.x, pos.y)
+  }
 }
 
 function draw(event) {
@@ -915,20 +934,41 @@ function draw(event) {
   event.preventDefault()
   const pos = getPos(event)
 
+  // 主 canvas：红色半透明预览涂抹效果
+  ctx.globalCompositeOperation = 'source-over'
   ctx.lineWidth = brushSize.value
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
 
   if (tool.value === 'eraser') {
+    // 橡皮擦：重绘原图对应区域来"擦除"预览
     ctx.globalCompositeOperation = 'destination-out'
     ctx.strokeStyle = 'rgba(0,0,0,1)'
   } else {
-    ctx.globalCompositeOperation = 'source-over'
     ctx.strokeStyle = 'rgba(255, 50, 50, 0.6)'
   }
-
   ctx.lineTo(pos.x, pos.y)
   ctx.stroke()
+  ctx.globalCompositeOperation = 'source-over'
+
+  // 离屏 canvas：记录纯黑白涂抹轨迹
+  if (maskCtx) {
+    maskCtx.lineWidth = brushSize.value
+    maskCtx.lineCap = 'round'
+    maskCtx.lineJoin = 'round'
+
+    if (tool.value === 'eraser') {
+      maskCtx.globalCompositeOperation = 'destination-out'
+      maskCtx.strokeStyle = 'rgba(0,0,0,1)'
+    } else {
+      maskCtx.globalCompositeOperation = 'source-over'
+      maskCtx.strokeStyle = '#ffffff'
+    }
+    maskCtx.lineTo(pos.x, pos.y)
+    maskCtx.stroke()
+    maskCtx.globalCompositeOperation = 'source-over'
+  }
+
   hasMask.value = true
 }
 
@@ -942,40 +982,27 @@ function clearMask() {
   if (!ctx) return
   ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value)
   ctx.drawImage(imageObj, 0, 0)
+  if (maskCtx) {
+    maskCtx.clearRect(0, 0, canvasWidth.value, canvasHeight.value)
+  }
   hasMask.value = false
   emit('mask-clear')
 }
 
 function confirmMask() {
-  if (!ctx || !hasMask.value) return
+  if (!maskCanvas || !maskCtx || !hasMask.value) return
 
-  // 生成纯黑白遮罩：涂抹区域白色，其余黑色
-  const maskCanvas = document.createElement('canvas')
-  maskCanvas.width = canvasWidth.value
-  maskCanvas.height = canvasHeight.value
-  const maskCtx = maskCanvas.getContext('2d')
+  // 直接从离屏 canvas 导出遮罩，涂抹区域白色，其余透明
+  // 先合成黑色背景
+  const exportCanvas = document.createElement('canvas')
+  exportCanvas.width = canvasWidth.value
+  exportCanvas.height = canvasHeight.value
+  const exportCtx = exportCanvas.getContext('2d')
+  exportCtx.fillStyle = '#000000'
+  exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height)
+  exportCtx.drawImage(maskCanvas, 0, 0)
 
-  // 先填黑色背景
-  maskCtx.fillStyle = '#000000'
-  maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height)
-
-  // 从原始 canvas 提取涂抹区域
-  const imageData = ctx.getImageData(0, 0, canvasWidth.value, canvasHeight.value)
-  const maskImageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)
-
-  for (let i = 0; i < imageData.data.length; i += 4) {
-    // alpha 通道 > 0 且非原图像素 = 涂抹区域
-    const originalAlpha = imageObj ? 255 : 0
-    if (imageData.data[i + 3] > 0 && imageData.data[i] > 200) {
-      maskImageData.data[i] = 255     // R
-      maskImageData.data[i + 1] = 255 // G
-      maskImageData.data[i + 2] = 255 // B
-      maskImageData.data[i + 3] = 255 // A
-    }
-  }
-  maskCtx.putImageData(maskImageData, 0, 0)
-
-  maskCanvas.toBlob((blob) => {
+  exportCanvas.toBlob((blob) => {
     if (blob) {
       emit('mask-ready', new File([blob], 'mask.png', { type: 'image/png' }))
     }
