@@ -16,20 +16,20 @@ class PixelateProcessor(BaseProcessor):
     params_schema = {
         "pixel_size": {
             "type": "number",
-            "label": "像素块大小 (Pixel Size)",
+            "label": "像素块大小",
             "default": 8,
             "min": 2,
             "max": 32,
         },
         "palette_colors": {
             "type": "select",
-            "label": "调色板颜色数 (Palette)",
+            "label": "调色板颜色数",
             "default": 0,
             "options": [0, 8, 16, 32, 64, 128, 256],
         },
         "output_size": {
             "type": "select",
-            "label": "输出尺寸 (Output Size)",
+            "label": "输出尺寸",
             "default": "original",
             "options": ["original", "64x64", "128x128", "256x256"],
         },

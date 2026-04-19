@@ -17,20 +17,20 @@ class WatermarkProcessor(BaseProcessor):
     params_schema = {
         "algorithm": {
             "type": "select",
-            "label": "算法 (Algorithm)",
+            "label": "算法",
             "default": "telea",
             "options": ["telea", "ns"],
         },
         "brush_size": {
             "type": "number",
-            "label": "修复半径 (Brush Size)",
+            "label": "修复半径",
             "default": 3,
             "min": 1,
             "max": 20,
         },
         "mask_file": {
             "type": "file",
-            "label": "遮罩文件 (Mask File)",
+            "label": "遮罩文件",
             "required": False,
         },
     }

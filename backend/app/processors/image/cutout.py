@@ -19,7 +19,7 @@ class CutoutProcessor(BaseProcessor):
     params_schema = {
         "alpha_matting": {
             "type": "checkbox",
-            "label": "精细边缘 (Alpha Matting)",
+            "label": "精细边缘",
             "default": False,
         }
     }

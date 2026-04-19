@@ -17,22 +17,22 @@ class CropProcessor(BaseProcessor):
     params_schema = {
         "mode": {
             "type": "select",
-            "label": "模式 (Mode)",
+            "label": "模式",
             "default": "custom",
             "options": ["custom", "power2", "crop"],
         },
-        "width": {"type": "number", "label": "宽度 (Width)", "min": 1},
-        "height": {"type": "number", "label": "高度 (Height)", "min": 1},
+        "width": {"type": "number", "label": "宽度", "min": 1},
+        "height": {"type": "number", "label": "高度", "min": 1},
         "power2_size": {
             "type": "select",
-            "label": "幂次尺寸 (Power2)",
+            "label": "幂次尺寸",
             "default": 256,
             "options": [32, 64, 128, 256, 512, 1024],
         },
-        "x": {"type": "number", "label": "X", "min": 0},
-        "y": {"type": "number", "label": "Y", "min": 0},
-        "crop_width": {"type": "number", "label": "裁剪宽 (Crop Width)", "min": 1},
-        "crop_height": {"type": "number", "label": "裁剪高 (Crop Height)", "min": 1},
+        "x": {"type": "number", "label": "起始 X", "min": 0},
+        "y": {"type": "number", "label": "起始 Y", "min": 0},
+        "crop_width": {"type": "number", "label": "裁剪宽度", "min": 1},
+        "crop_height": {"type": "number", "label": "裁剪高度", "min": 1},
     }
 
     _POWER2_SIZES = {32, 64, 128, 256, 512, 1024}
