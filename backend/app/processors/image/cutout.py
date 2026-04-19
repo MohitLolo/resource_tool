@@ -144,13 +144,26 @@ class CutoutProcessor(BaseProcessor):
         return rembg_remove, rembg_new_session
 
     def _apply_runtime_env(self) -> None:
-        os.environ["U2NET_HOME"] = settings.U2NET_HOME
+        os.environ["U2NET_HOME"] = self._resolve_u2net_home()
         if settings.CUTOUT_DISABLE_NUMBA_JIT:
             os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 
+    def _resolve_u2net_home(self) -> str:
+        configured_home = Path(settings.U2NET_HOME)
+        configured_model = configured_home / "u2net.onnx"
+        if configured_model.exists():
+            return str(configured_home)
+
+        legacy_home = Path("/root/.u2net")
+        legacy_model = legacy_home / "u2net.onnx"
+        if legacy_model.exists():
+            return str(legacy_home)
+
+        return str(configured_home)
+
     def _runtime_key(self) -> tuple[str, tuple[str, ...], str]:
         providers = tuple(settings.CUTOUT_PROVIDERS)
-        return settings.CUTOUT_MODEL, providers, settings.U2NET_HOME
+        return settings.CUTOUT_MODEL, providers, self._resolve_u2net_home()
 
     @staticmethod
     def _purge_module_prefixes(prefixes: list[str]) -> None:
