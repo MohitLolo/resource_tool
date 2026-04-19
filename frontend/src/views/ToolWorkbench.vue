@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import FileUpload from '../components/FileUpload.vue'
+import MaskCanvas from '../components/MaskCanvas.vue'
 import ParamForm from '../components/ParamForm.vue'
 import PreviewPane from '../components/PreviewPane.vue'
 import ProgressPanel from '../components/ProgressPanel.vue'
@@ -35,6 +36,8 @@ const sourcePreview = ref({ src: '', mimeType: '' })
 const resultPreview = ref({ src: '', mimeType: '' })
 const resultSummary = ref('')
 const sampledResultThumbs = ref([])
+const maskFile = ref(null)
+const maskConfirmed = ref(false)
 
 const pollTimer = ref(null)
 const fallbackEnabled = ref(false)
@@ -93,6 +96,9 @@ const paramsSchema = computed(() => selectedProcessor.value?.params_schema || {}
 const hasProcessors = computed(() => processors.value.length > 0)
 const canDownload = computed(() => taskInfo.value?.status === 'completed')
 const isImageMode = computed(() => currentCategory.value === 'image')
+const isManualWatermark = computed(
+  () => selectedProcessorName.value === 'image.watermark' && params.value.mode === 'manual',
+)
 
 function appendLog(text) {
   if (!text) return
@@ -230,6 +236,8 @@ function resetCategoryState() {
   resetResultPreview()
   resetSampledThumbs()
   resultSummary.value = ''
+  maskFile.value = null
+  maskConfirmed.value = false
   if (sourcePreview.value.src?.startsWith('blob:')) {
     URL.revokeObjectURL(sourcePreview.value.src)
   }
@@ -247,6 +255,8 @@ function onProcessorChange(name) {
   selectedProcessorName.value = name
   params.value = {}
   extraFileMap.value = {}
+  maskFile.value = null
+  maskConfirmed.value = false
 }
 
 function onParamFileChange({ key, file }) {
@@ -259,6 +269,21 @@ function onParamFileChange({ key, file }) {
   }
 }
 
+function onMaskReady(file) {
+  maskFile.value = file
+  maskConfirmed.value = true
+  extraFileMap.value = {
+    ...extraFileMap.value,
+    mask_file: file,
+  }
+}
+
+function onMaskClear() {
+  maskFile.value = null
+  maskConfirmed.value = false
+  delete extraFileMap.value.mask_file
+}
+
 function buildTaskPayload() {
   const payloadParams = { ...params.value }
   const extraFiles = []
@@ -267,6 +292,10 @@ function buildTaskPayload() {
     if (!file) continue
     extraFiles.push(file)
     payloadParams[`${key}_key`] = file.name
+  }
+
+  if (maskFile.value && isManualWatermark.value) {
+    payloadParams.mask_file_key = 'mask_file'
   }
 
   return { payloadParams, extraFiles }
@@ -349,6 +378,10 @@ async function submitTask() {
   resetResultPreview()
   resetSampledThumbs()
   resultSummary.value = ''
+  if (isManualWatermark.value && !maskConfirmed.value) {
+    pushNotice('请先在右侧画布确认遮罩')
+    return
+  }
   const { payloadParams, extraFiles } = buildTaskPayload()
 
   try {
@@ -415,6 +448,14 @@ watch(
   () => selectedFile.value,
   (file) => {
     updateSourcePreview(file)
+  },
+)
+
+watch(
+  () => isManualWatermark.value,
+  (manual) => {
+    if (manual) return
+    onMaskClear()
   },
 )
 
@@ -538,6 +579,12 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="right-panel">
+      <div v-if="isManualWatermark && sourcePreview.src" class="panel-section mask-section">
+        <p class="section-title">涂抹水印区域</p>
+        <MaskCanvas :src="sourcePreview.src" :disabled="running" @mask-ready="onMaskReady" @mask-clear="onMaskClear" />
+        <div v-if="maskConfirmed" class="mask-hint">遮罩已确认，可以开始处理</div>
+      </div>
+
       <div class="preview-grid">
         <PreviewPane
           :title="categoryMeta.sourceTitle"
@@ -635,6 +682,19 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.mask-section {
+  margin-bottom: 12px;
+}
+
+.mask-hint {
+  margin-top: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: var(--radius-sm);
 }
 
 @media (max-width: 1024px) {
