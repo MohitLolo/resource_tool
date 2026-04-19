@@ -7,11 +7,12 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from app.config import settings
 from app.processors.image.cutout import CutoutProcessor
 
 
 def _model_path() -> Path:
-    base = Path(os.getenv("U2NET_HOME", "/root/.u2net"))
+    base = Path(os.getenv("U2NET_HOME", settings.U2NET_HOME))
     return base / "u2net.onnx"
 
 

@@ -9,8 +9,10 @@ def test_settings_builds_derived_directories_and_ensure_dirs(tmp_path: Path) -> 
 
     assert Path(settings.UPLOAD_DIR) == data_dir / "uploads"
     assert Path(settings.OUTPUT_DIR) == data_dir / "outputs"
+    assert Path(settings.U2NET_HOME) == data_dir / "models" / "u2net"
 
     settings.ensure_dirs()
 
     assert (data_dir / "uploads").is_dir()
     assert (data_dir / "outputs").is_dir()
+    assert (data_dir / "models" / "u2net").is_dir()

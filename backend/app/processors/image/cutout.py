@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import importlib
 import os
+import sys
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image
 
+from app.config import settings
 from app.core.base import BaseProcessor, ProgressCallback
 
 
@@ -57,7 +61,10 @@ class CutoutProcessor(BaseProcessor):
 
     def _warmup_rembg(self) -> None:
         """首次调用时预加载模型，后续调用走缓存不耗时。"""
-        if self.__class__._model_loaded:
+        if not settings.CUTOUT_WARMUP:
+            return
+        key = self._runtime_key()
+        if key in self.__class__._warmup_done:
             return
         try:
             rembg_remove = self._import_rembg_remove()
@@ -65,13 +72,18 @@ class CutoutProcessor(BaseProcessor):
             dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
             buf = BytesIO()
             dummy.save(buf, format="PNG")
-            rembg_remove(buf.getvalue(), alpha_matting=False)
-            self.__class__._model_loaded = True
+            rembg_remove(
+                buf.getvalue(),
+                alpha_matting=False,
+                session=self._get_or_create_session(),
+            )
+            self.__class__._warmup_done.add(key)
         except Exception:
             # 预热仅用于降低首次请求延迟，不应阻塞主处理流程。
             return
 
-    _model_loaded = False
+    _warmup_done: set[tuple[str, tuple[str, ...], str]] = set()
+    _sessions: dict[tuple[str, tuple[str, ...], str], Any] = {}
 
     def _ensure_rgba_png_bytes(self, result: bytes | Image.Image | np.ndarray) -> bytes:
         if isinstance(result, bytes):
@@ -91,16 +103,57 @@ class CutoutProcessor(BaseProcessor):
         alpha_matting: bool,
     ) -> bytes | Image.Image | np.ndarray:
         rembg_remove = self._import_rembg_remove()
-        return rembg_remove(input_bytes, alpha_matting=alpha_matting)
+        return rembg_remove(
+            input_bytes,
+            alpha_matting=alpha_matting,
+            session=self._get_or_create_session(),
+        )
+
+    def _get_or_create_session(self):
+        key = self._runtime_key()
+        session = self.__class__._sessions.get(key)
+        if session is not None:
+            return session
+
+        _, rembg_new_session = self._import_rembg_api()
+        self.__class__._sessions[key] = rembg_new_session(
+            settings.CUTOUT_MODEL,
+            providers=list(settings.CUTOUT_PROVIDERS),
+        )
+        return self.__class__._sessions[key]
 
     def _import_rembg_remove(self):
-        # 部分环境下 pymatting 会触发 numba 缓存初始化异常，这里降级关闭 JIT 重试。
+        rembg_remove, _ = self._import_rembg_api()
+        return rembg_remove
+
+    def _import_rembg_api(self):
+        self._apply_runtime_env()
+        # 部分环境下 pymatting 会触发 numba 缓存初始化异常，这里降级关闭 JIT 后重试。
         try:
+            from rembg import new_session as rembg_new_session
             from rembg import remove as rembg_remove
         except RuntimeError as exc:
             if "cannot cache function" not in str(exc):
                 raise
             os.environ["NUMBA_DISABLE_JIT"] = "1"
+            self._purge_module_prefixes(["rembg", "pymatting"])
+            importlib.invalidate_caches()
+            from rembg import new_session as rembg_new_session
             from rembg import remove as rembg_remove
 
-        return rembg_remove
+        return rembg_remove, rembg_new_session
+
+    def _apply_runtime_env(self) -> None:
+        os.environ["U2NET_HOME"] = settings.U2NET_HOME
+        if settings.CUTOUT_DISABLE_NUMBA_JIT:
+            os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
+
+    def _runtime_key(self) -> tuple[str, tuple[str, ...], str]:
+        providers = tuple(settings.CUTOUT_PROVIDERS)
+        return settings.CUTOUT_MODEL, providers, settings.U2NET_HOME
+
+    @staticmethod
+    def _purge_module_prefixes(prefixes: list[str]) -> None:
+        keys = [key for key in sys.modules if any(key == p or key.startswith(f"{p}.") for p in prefixes)]
+        for key in keys:
+            sys.modules.pop(key, None)
