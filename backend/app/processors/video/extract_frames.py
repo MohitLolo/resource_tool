@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import uuid
 from pathlib import Path
 
 from app.core.base import BaseProcessor, ProgressCallback
@@ -26,8 +27,18 @@ class ExtractFramesProcessor(BaseProcessor):
             "min": 1,
             "max": 60,
         },
-        "start": {"type": "number", "label": "开始时间", "default": 0},
-        "end": {"type": "number", "label": "结束时间", "default": 1},
+        "start": {
+            "type": "number",
+            "label": "开始时间",
+            "default": 0,
+            "visible_when": {"mode": "range"},
+        },
+        "end": {
+            "type": "number",
+            "label": "结束时间",
+            "default": 1,
+            "visible_when": {"mode": "range"},
+        },
         "format": {
             "type": "select",
             "label": "输出格式",
@@ -79,7 +90,9 @@ class ExtractFramesProcessor(BaseProcessor):
         output_format = str(params.get("format", "png")).lower()
 
         output_dir_path = Path(output_dir)
-        output_pattern = output_dir_path / f"frame_%05d.{output_format}"
+        run_dir = output_dir_path / f"extract_frames_{uuid.uuid4().hex[:8]}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        output_pattern = run_dir / f"frame_%05d.{output_format}"
 
         command = ["ffmpeg", "-y"]
         if mode == "range":
@@ -104,6 +117,6 @@ class ExtractFramesProcessor(BaseProcessor):
             message = stderr or "ffmpeg execution failed"
             raise RuntimeError(f"ffmpeg failed: {message}")
 
-        frames = sorted(output_dir_path.glob(f"frame_*.{output_format}"))
+        frames = sorted(run_dir.glob(f"frame_*.{output_format}"))
         progress_callback(100, "完成")
         return [str(path) for path in frames]

@@ -102,6 +102,20 @@ async def download_task_result(task_id: str):
     return FileResponse(zip_path, filename=zip_path.name)
 
 
+@router.get("/{task_id}/outputs/{index}")
+async def get_task_output_file(task_id: str, index: int):
+    task = task_store.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if index < 0 or index >= len(task.output_files):
+        raise HTTPException(status_code=404, detail="Output file not found")
+
+    output_path = Path(task.output_files[index])
+    if not output_path.exists():
+        raise HTTPException(status_code=404, detail="Output file missing on server")
+    return FileResponse(output_path, filename=output_path.name)
+
+
 @router.delete("/{task_id}")
 async def cancel_or_delete_task(task_id: str) -> dict:
     task = task_store.get(task_id)

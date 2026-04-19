@@ -6,7 +6,14 @@ import FileUpload from '../components/FileUpload.vue'
 import ParamForm from '../components/ParamForm.vue'
 import PreviewPane from '../components/PreviewPane.vue'
 import ProgressPanel from '../components/ProgressPanel.vue'
-import { createTask, deleteTask, downloadResult, getProcessors, getTask } from '../api'
+import {
+  createTask,
+  deleteTask,
+  downloadResult,
+  downloadTaskOutput,
+  getProcessors,
+  getTask,
+} from '../api'
 import { useWebSocket } from '../composables/useWebSocket'
 
 const route = useRoute()
@@ -26,6 +33,8 @@ const notice = ref('')
 
 const sourcePreview = ref({ src: '', mimeType: '' })
 const resultPreview = ref({ src: '', mimeType: '' })
+const resultSummary = ref('')
+const sampledResultThumbs = ref([])
 
 const pollTimer = ref(null)
 const fallbackEnabled = ref(false)
@@ -134,6 +143,58 @@ function resetResultPreview() {
   resultPreview.value = { src: '', mimeType: '' }
 }
 
+function resetSampledThumbs() {
+  for (const item of sampledResultThumbs.value) {
+    if (item.src?.startsWith('blob:')) {
+      URL.revokeObjectURL(item.src)
+    }
+  }
+  sampledResultThumbs.value = []
+}
+
+function filenameOf(path) {
+  return String(path || '')
+    .split('/')
+    .pop()
+}
+
+function buildResultSummary() {
+  const info = taskInfo.value
+  if (!info) {
+    resultSummary.value = ''
+    return
+  }
+  const outputs = Array.isArray(info.output_files) ? info.output_files : []
+  if (info.status !== 'completed') {
+    resultSummary.value = info.message || '任务处理中'
+    return
+  }
+  if (outputs.length === 0) {
+    resultSummary.value = '任务完成，但无输出文件'
+    return
+  }
+  const firstNames = outputs.slice(0, 3).map(filenameOf).join('、')
+  const suffix = outputs.length > 3 ? ' ...' : ''
+  const sampledHint =
+    currentCategory.value === 'video' && selectedProcessorName.value === 'video.extract_frames'
+      ? `；共 ${outputs.length} 帧，已按时间均匀抽样展示 ${Math.min(outputs.length, 6)} 帧缩略图`
+      : ''
+  resultSummary.value = `已生成 ${outputs.length} 个文件：${firstNames}${suffix}${sampledHint}`
+}
+
+function buildSampleIndexes(total, maxCount = 6) {
+  if (total <= 0) return []
+  if (total <= maxCount) {
+    return Array.from({ length: total }, (_, idx) => idx)
+  }
+  const step = (total - 1) / (maxCount - 1)
+  const indexes = []
+  for (let i = 0; i < maxCount; i += 1) {
+    indexes.push(Math.round(i * step))
+  }
+  return [...new Set(indexes)]
+}
+
 function updateSourcePreview(file) {
   if (sourcePreview.value.src?.startsWith('blob:')) {
     URL.revokeObjectURL(sourcePreview.value.src)
@@ -167,6 +228,8 @@ function resetCategoryState() {
   fallbackEnabled.value = false
   clearPoll()
   resetResultPreview()
+  resetSampledThumbs()
+  resultSummary.value = ''
   if (sourcePreview.value.src?.startsWith('blob:')) {
     URL.revokeObjectURL(sourcePreview.value.src)
   }
@@ -221,7 +284,10 @@ async function refreshTask() {
 }
 
 async function previewAndCacheResult() {
-  if (!taskId.value || taskInfo.value?.status !== 'completed' || !isImageMode.value) {
+  if (!taskId.value || taskInfo.value?.status !== 'completed') {
+    return
+  }
+  if (!isImageMode.value) {
     return
   }
   try {
@@ -234,6 +300,33 @@ async function previewAndCacheResult() {
   } catch (error) {
     appendLog(`结果预览加载失败: ${error}`)
   }
+}
+
+async function loadSampledResultThumbs() {
+  resetSampledThumbs()
+  if (currentCategory.value !== 'video') return
+  if (!taskInfo.value || taskInfo.value.status !== 'completed') return
+  if (selectedProcessorName.value !== 'video.extract_frames') return
+
+  const outputs = Array.isArray(taskInfo.value.output_files) ? taskInfo.value.output_files : []
+  const sampleIndexes = buildSampleIndexes(outputs.length, 6)
+  const thumbs = []
+  for (const index of sampleIndexes) {
+    try {
+      const { blob, filename } = await downloadTaskOutput(taskId.value, index)
+      const mimeType = blob.type || ''
+      if (!mimeType.startsWith('image/')) {
+        continue
+      }
+      thumbs.push({
+        src: URL.createObjectURL(blob),
+        name: filename || filenameOf(outputs[index]),
+      })
+    } catch (error) {
+      appendLog(`缩略图加载失败(index=${index}): ${error}`)
+    }
+  }
+  sampledResultThumbs.value = thumbs
 }
 
 async function submitTask() {
@@ -254,6 +347,8 @@ async function submitTask() {
   logs.value = []
   taskInfo.value = null
   resetResultPreview()
+  resetSampledThumbs()
+  resultSummary.value = ''
   const { payloadParams, extraFiles } = buildTaskPayload()
 
   try {
@@ -335,7 +430,9 @@ watch(
       fallbackEnabled.value = false
       clearPoll()
       await refreshTask()
+      buildResultSummary()
       await previewAndCacheResult()
+      await loadSampledResultThumbs()
     }
   },
 )
@@ -390,6 +487,7 @@ onBeforeUnmount(() => {
     URL.revokeObjectURL(sourcePreview.value.src)
   }
   resetResultPreview()
+  resetSampledThumbs()
 })
 </script>
 
@@ -457,6 +555,19 @@ onBeforeUnmount(() => {
         />
       </div>
 
+      <section v-if="!isImageMode" class="result-note">
+        <header class="result-note-head">结果说明</header>
+        <p class="result-note-text">
+          {{ resultSummary || '任务完成后将显示输出文件数量与样例信息。' }}
+        </p>
+        <div v-if="sampledResultThumbs.length > 0" class="thumb-grid">
+          <figure v-for="item in sampledResultThumbs" :key="item.src" class="thumb-item">
+            <img :src="item.src" :alt="item.name" class="thumb-image" />
+            <figcaption class="thumb-name">{{ item.name }}</figcaption>
+          </figure>
+        </div>
+      </section>
+
       <ProgressPanel
         :progress="ws.progress.value"
         :status="ws.status.value"
@@ -471,3 +582,64 @@ onBeforeUnmount(() => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.result-note {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--bg-card) 68%, transparent);
+}
+
+.result-note-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.result-note-text {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.thumb-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.thumb-item {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: color-mix(in srgb, var(--bg-input) 86%, transparent);
+}
+
+.thumb-image {
+  width: 100%;
+  display: block;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+.thumb-name {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1024px) {
+  .thumb-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+</style>

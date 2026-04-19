@@ -72,4 +72,16 @@ export async function downloadResult(taskId) {
   }
 }
 
+export async function downloadTaskOutput(taskId, index) {
+  const response = await api.get(`/tasks/${taskId}/outputs/${index}`, {
+    responseType: 'blob',
+  })
+  const disposition = response.headers['content-disposition'] || ''
+  const filename = parseFilenameFromDisposition(disposition) || `task_${taskId}_output_${index}`
+  return {
+    blob: response.data,
+    filename,
+  }
+}
+
 export default api

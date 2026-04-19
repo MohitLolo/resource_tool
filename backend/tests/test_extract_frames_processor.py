@@ -40,8 +40,12 @@ def test_process_builds_ffmpeg_command_for_range_mode(tmp_path, monkeypatch) -> 
         assert capture_output is True
         assert text is True
         captured.append(cmd)
-        (tmp_path / "frame_00001.jpg").write_bytes(b"x")
-        (tmp_path / "frame_00002.jpg").write_bytes(b"x")
+        pattern = Path(cmd[-1])
+        frame1 = Path(str(pattern).replace("%05d", "00001"))
+        frame2 = Path(str(pattern).replace("%05d", "00002"))
+        frame1.parent.mkdir(parents=True, exist_ok=True)
+        frame1.write_bytes(b"x")
+        frame2.write_bytes(b"x")
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr("app.processors.video.extract_frames.subprocess.run", fake_run)
@@ -63,6 +67,35 @@ def test_process_builds_ffmpeg_command_for_range_mode(tmp_path, monkeypatch) -> 
 
     assert len(outputs) == 2
     assert outputs[0].endswith(".jpg")
+    assert "extract_frames_" in outputs[0]
+
+
+def test_process_does_not_include_historical_frames(tmp_path, monkeypatch) -> None:
+    processor = ExtractFramesProcessor()
+    input_file = tmp_path / "input.mp4"
+    input_file.write_bytes(b"fake")
+    # 历史任务遗留文件，不应被本次输出计入。
+    (tmp_path / "frame_99999.jpg").write_bytes(b"old")
+
+    def fake_run(cmd, check, capture_output, text):
+        pattern = Path(cmd[-1])
+        frame = Path(str(pattern).replace("%05d", "00001"))
+        frame.parent.mkdir(parents=True, exist_ok=True)
+        frame.write_bytes(b"new")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr("app.processors.video.extract_frames.subprocess.run", fake_run)
+
+    outputs = processor.process(
+        input_file=str(input_file),
+        output_dir=str(tmp_path),
+        params={"mode": "all", "fps": 5, "format": "jpg"},
+        progress_callback=lambda _progress, _message: None,
+    )
+
+    assert len(outputs) == 1
+    assert outputs[0].endswith("frame_00001.jpg")
+    assert outputs[0] != str(tmp_path / "frame_99999.jpg")
 
 
 def test_process_raises_when_input_file_missing(tmp_path) -> None:

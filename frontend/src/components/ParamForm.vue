@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps({
   modelValue: {
@@ -14,7 +14,10 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue', 'file-change'])
 
-const entries = computed(() => Object.entries(props.paramsSchema || {}))
+const entries = computed(() =>
+  Object.entries(props.paramsSchema || {}).filter(([, config]) => shouldShowField(config)),
+)
+const selectedFiles = ref({})
 
 function updateValue(key, value) {
   emit('update:modelValue', {
@@ -25,6 +28,10 @@ function updateValue(key, value) {
 
 function onFileChange(key, event) {
   const file = event.target.files?.[0] || null
+  selectedFiles.value = {
+    ...selectedFiles.value,
+    [key]: file?.name || '',
+  }
   emit('file-change', { key, file })
   event.target.value = ''
 }
@@ -34,6 +41,22 @@ function currentValue(key, config) {
     return props.modelValue[key]
   }
   return config.default
+}
+
+function shouldShowField(config) {
+  const visibleWhen = config?.visible_when
+  if (!visibleWhen || typeof visibleWhen !== 'object') {
+    return true
+  }
+
+  return Object.entries(visibleWhen).every(([depKey, expected]) => {
+    const depConfig = props.paramsSchema?.[depKey] || {}
+    const actual = currentValue(depKey, depConfig)
+    if (Array.isArray(expected)) {
+      return expected.includes(actual)
+    }
+    return actual === expected
+  })
 }
 
 function displayValue(value, fallback = '') {
@@ -97,13 +120,18 @@ function displayValue(value, fallback = '') {
         <span class="switch-text">{{ Boolean(currentValue(key, config)) ? '开启' : '关闭' }}</span>
       </label>
 
-      <input
-        v-else-if="config.type === 'file'"
-        :id="`param-${key}`"
-        class="form-control file-input"
-        type="file"
-        @change="(event) => onFileChange(key, event)"
-      />
+      <div v-else-if="config.type === 'file'" class="file-picker">
+        <input
+          :id="`param-${key}`"
+          class="file-input-hidden"
+          type="file"
+          @change="(event) => onFileChange(key, event)"
+        />
+        <label :for="`param-${key}`" class="file-picker-btn">选择文件</label>
+        <span class="file-picker-name">
+          {{ selectedFiles[key] || '未选择文件' }}
+        </span>
+      </div>
 
       <input
         v-else
@@ -149,8 +177,62 @@ function displayValue(value, fallback = '') {
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
 }
 
-.file-input {
-  padding: 8px;
+.file-picker {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.file-input-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.file-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--bg-card) 78%, var(--accent) 22%),
+    color-mix(in srgb, var(--bg-card) 70%, var(--accent2) 30%)
+  );
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent-glow) 55%, transparent);
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.file-picker-btn:hover {
+  border-color: var(--border-active);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent-glow) 78%, transparent);
+}
+
+.file-picker-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .slider-wrap {
