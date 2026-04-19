@@ -59,13 +59,17 @@ class CutoutProcessor(BaseProcessor):
         """首次调用时预加载模型，后续调用走缓存不耗时。"""
         if self.__class__._model_loaded:
             return
-        from rembg import remove as rembg_remove
-        # 用 1x1 透明 PNG 触发模型下载和初始化
-        dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
-        buf = BytesIO()
-        dummy.save(buf, format="PNG")
-        rembg_remove(buf.getvalue())
-        self.__class__._model_loaded = True
+        try:
+            rembg_remove = self._import_rembg_remove()
+            # 用 1x1 透明 PNG 触发模型下载和初始化
+            dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+            buf = BytesIO()
+            dummy.save(buf, format="PNG")
+            rembg_remove(buf.getvalue(), alpha_matting=False)
+            self.__class__._model_loaded = True
+        except Exception:
+            # 预热仅用于降低首次请求延迟，不应阻塞主处理流程。
+            return
 
     _model_loaded = False
 
@@ -86,6 +90,10 @@ class CutoutProcessor(BaseProcessor):
         input_bytes: bytes,
         alpha_matting: bool,
     ) -> bytes | Image.Image | np.ndarray:
+        rembg_remove = self._import_rembg_remove()
+        return rembg_remove(input_bytes, alpha_matting=alpha_matting)
+
+    def _import_rembg_remove(self):
         # 部分环境下 pymatting 会触发 numba 缓存初始化异常，这里降级关闭 JIT 重试。
         try:
             from rembg import remove as rembg_remove
@@ -95,4 +103,4 @@ class CutoutProcessor(BaseProcessor):
             os.environ["NUMBA_DISABLE_JIT"] = "1"
             from rembg import remove as rembg_remove
 
-        return rembg_remove(input_bytes, alpha_matting=alpha_matting)
+        return rembg_remove

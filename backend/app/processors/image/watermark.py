@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import cv2
@@ -45,7 +46,18 @@ class WatermarkProcessor(BaseProcessor):
     def validate(self, params: dict) -> bool:
         """校验算法参数。"""
         algorithm = str(params.get("algorithm", "telea")).lower()
-        return algorithm in {"telea", "ns"}
+        if algorithm not in {"telea", "ns"}:
+            return False
+
+        sensitivity = self._as_int(params.get("sensitivity", 70))
+        if sensitivity is None or not 1 <= sensitivity <= 100:
+            return False
+
+        brush_size = self._as_int(params.get("brush_size", 3))
+        if brush_size is None or not 1 <= brush_size <= 20:
+            return False
+
+        return True
 
     def process(
         self,
@@ -63,10 +75,11 @@ class WatermarkProcessor(BaseProcessor):
         if image is None:
             raise ValueError(f"Failed to read input image: {input_file}")
 
-        mask = self._load_mask(image, params, sensitivity=int(params.get("sensitivity", 70)))
+        sensitivity = self._resolve_sensitivity(params)
+        mask = self._load_mask(image, params, sensitivity=sensitivity)
         progress_callback(70, "修复水印区域")
 
-        brush_size = int(params.get("brush_size", 3))
+        brush_size = self._resolve_brush_size(params)
         method = self._resolve_method(str(params.get("algorithm", "telea")))
         output = cv2.inpaint(image, mask, brush_size, method)
 
@@ -88,7 +101,22 @@ class WatermarkProcessor(BaseProcessor):
             if mask.shape != image.shape[:2]:
                 raise ValueError("Mask shape must match input image size")
             return mask
-        return self._auto_detect_mask(image, sensitivity=sensitivity)
+        auto_detect_params = inspect.signature(self._auto_detect_mask).parameters
+        if len(auto_detect_params) >= 2:
+            return self._auto_detect_mask(image, sensitivity=sensitivity)
+        return self._auto_detect_mask(image)
+
+    def _resolve_sensitivity(self, params: dict) -> int:
+        sensitivity = self._as_int(params.get("sensitivity", 70))
+        if sensitivity is None or not 1 <= sensitivity <= 100:
+            raise ValueError("Invalid sensitivity. Allowed range: 1-100")
+        return sensitivity
+
+    def _resolve_brush_size(self, params: dict) -> int:
+        brush_size = self._as_int(params.get("brush_size", 3))
+        if brush_size is None or not 1 <= brush_size <= 20:
+            raise ValueError("Invalid brush_size. Allowed range: 1-20")
+        return brush_size
 
     def _resolve_mask_file(self, params: dict) -> str | None:
         extra_files = params.get("extra_files", {})

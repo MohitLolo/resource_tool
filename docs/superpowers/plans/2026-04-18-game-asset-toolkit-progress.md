@@ -348,5 +348,39 @@
   - 回归测试：
     - `conda run -n gameasset pytest -q backend/tests/test_worker.py` -> `2 passed`
 
+- Task 27E（联调问题修复）：已完成（未提交）
+  - 已修复分类切换导致任务上下文丢失：
+    - 在 `ToolWorkbench.vue` 增加运行中切换拦截
+    - 任务执行中点击其他分类会提示并自动回退到原分类路由
+  - 已修复 fallback 轮询无上限问题：
+    - 增加连续失败计数（5 次后自动停止轮询）
+    - 避免后端异常时日志无限增长
+  - 已统一状态文案：
+    - `ProgressPanel.vue` 增加 `connected -> 已连接`
+  - 验证：`cd frontend && npm run build` 通过
+
+- Task 27F（代码审阅回归修复）：已完成（未提交）
+  - 修复 `watermark` 灵敏度参数引入后的兼容性回归：
+    - `_load_mask()` 兼容旧版单参数 `_auto_detect_mask` 调用（支持测试中的 monkeypatch）
+  - 补充 `watermark` 后端参数校验：
+    - `validate()` 增加 `sensitivity(1-100)` 与 `brush_size(1-20)` 校验
+    - `process()` 中新增 `_resolve_sensitivity()` / `_resolve_brush_size()`，非法参数抛明确错误
+  - 变更文件：
+    - `backend/app/processors/image/watermark.py`
+  - 验证：
+    - `conda run -n gameasset pytest -q backend/tests/test_watermark_processor.py` -> `4 passed`
+    - `conda run -n gameasset pytest -q backend/tests/test_worker.py` -> `2 passed`
+
+- Task 27G（cutout 预热回归修复）：已完成（未提交）
+  - 修复 `cutout` 预热引入的单测回归：
+    - 预热改为“最佳努力”，失败不阻塞主流程
+    - `rembg` 导入降级逻辑抽取为 `_import_rembg_remove()`，由预热与主处理复用
+    - 避免预热绕过既有兼容路径导致 `numba/rembg` 环境异常
+  - 变更文件：
+    - `backend/app/processors/image/cutout.py`
+  - 验证：
+    - `conda run -n gameasset pytest -q backend/tests/test_cutout_processor.py` -> `2 passed, 1 skipped`
+    - `conda run -n gameasset pytest -q backend/tests/test_worker.py backend/tests/test_watermark_processor.py` -> `6 passed`
+
 ## 下一步
 - 第 4 批收尾：联调后问题清单清理 + 按 RULER.md 提交代码
