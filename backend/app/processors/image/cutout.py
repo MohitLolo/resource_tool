@@ -36,10 +36,13 @@ class CutoutProcessor(BaseProcessor):
         progress_callback: ProgressCallback,
     ) -> list[str]:
         """执行抠图处理。"""
+        progress_callback(5, "加载模型")
+        self._warmup_rembg()
+
         progress_callback(10, "读取图片")
         input_bytes = Path(input_file).read_bytes()
 
-        progress_callback(60, "移除背景")
+        progress_callback(30, "移除背景")
         alpha_matting = bool(params.get("alpha_matting", False))
         result = self._remove_background(input_bytes, alpha_matting=alpha_matting)
 
@@ -51,6 +54,20 @@ class CutoutProcessor(BaseProcessor):
 
         progress_callback(100, "完成")
         return [str(output_path)]
+
+    def _warmup_rembg(self) -> None:
+        """首次调用时预加载模型，后续调用走缓存不耗时。"""
+        if self.__class__._model_loaded:
+            return
+        from rembg import remove as rembg_remove
+        # 用 1x1 透明 PNG 触发模型下载和初始化
+        dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        buf = BytesIO()
+        dummy.save(buf, format="PNG")
+        rembg_remove(buf.getvalue())
+        self.__class__._model_loaded = True
+
+    _model_loaded = False
 
     def _ensure_rgba_png_bytes(self, result: bytes | Image.Image | np.ndarray) -> bytes:
         if isinstance(result, bytes):
