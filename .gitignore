@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Environments
+.env
+.venv/
+
+# Project data
+data/
+
+# Frontend
+node_modules/
+dist/
+
+# Tooling
+.superpowers/
+
+# IDE
+.idea/
+CLAUDE.md
+.codex

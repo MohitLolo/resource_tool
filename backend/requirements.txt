@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+celery
+redis[hiredis]
+pillow
+opencv-python-headless
+rembg
+ffmpeg-python
+pydub
+python-multipart
+aiofiles
+pydantic-settings
+pytest
+httpx
