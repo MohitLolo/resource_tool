@@ -12,4 +12,4 @@ aiofiles
 pydantic-settings
 pytest
 httpx
-simple-lama-inpainting
+simple-lama-inpainting==0.1.2

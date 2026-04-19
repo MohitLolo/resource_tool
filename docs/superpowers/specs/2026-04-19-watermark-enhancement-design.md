@@ -4,9 +4,9 @@
 
 **目标：** 用 LaMa 深度学习模型替换 OpenCV inpaint，提升水印修复质量；前端增加画笔涂抹交互。
 
-**架构：** 检测层用 FFT 频域分析 + 自适应阈值定位水印区域，修复层用 LaMa onnx 模型填充遮罩区域。前端增加 canvas 画笔涂抹生成手动遮罩。
+**架构：** 检测层用 FFT 频域分析 + 自适应阈值定位水印区域，修复层用 LaMa 模型填充遮罩区域。前端增加 canvas 画笔涂抹生成手动遮罩。
 
-**技术栈：** LaMa (simple-lama-inpainting)、onnxruntime、OpenCV (FFT)、Canvas API
+**技术栈：** LaMa (simple-lama-inpainting)、PyTorch（simple-lama 运行时依赖）、OpenCV (FFT)、Canvas API
 
 ---
 
@@ -52,13 +52,13 @@
 2. 未检测到则跑边角检测 + 文字检测，结果合并为最终遮罩
 3. 都未检测到则返回提示"未检测到水印，请使用手动涂抹"
 
-**手动模式：** 前端画笔涂抹的遮罩直接作为最终遮罩，跳过自动检测。如果用户选了 manual 模式但未提供遮罩就提交，后端自动 fallback 到自动检测模式，并在返回结果中通过 message 字段提示"未提供遮罩，已使用自动检测"。前端应在提交前校验手动模式下是否已确认遮罩。
+**手动模式：** 前端画笔涂抹的遮罩直接作为最终遮罩，跳过自动检测。前端在提交前校验 manual 模式下必须先确认遮罩；若绕过前端校验直接请求后端且未提供遮罩，后端回退到自动检测，并通过进度消息提示"未提供遮罩，已使用自动检测"。
 
 ### 修复层
 
-**模型：** `simple-lama-inpainting` 库，封装 LaMa onnx 推理。
+**模型：** `simple-lama-inpainting` 库，当前版本（0.1.2）依赖 PyTorch 推理，不走 onnxruntime。
 
-> **风险点：** 需验证 `simple-lama-inpainting` 的 onnxruntime 依赖版本与项目中 rembg 已安装的版本是否兼容。如有冲突，改为直接下载 LaMa onnx 权重文件，用项目中已有的 onnxruntime 手动构建推理会话（参考 cutout.py 模式）。
+> **风险点（已澄清）：** 与 rembg 的 onnxruntime 不存在直接版本冲突（依赖栈不同）；但需关注 simple-lama 的维护状态与 PyTorch 体积/冷启动成本。通过固定版本（`simple-lama-inpainting==0.1.2`）+ API 契约测试（`SimpleLama.__call__(image, mask)`）降低升级风险；若后续库不可维护，可切换为项目内自托管推理实现，保持 processor 接口不变。
 
 **调用方式：**
 ```python
@@ -68,13 +68,16 @@ simple_lama = SimpleLama()
 result = simple_lama(image, mask)  # PIL Image + 黑白遮罩
 ```
 
-**集成模式（跟 cutout.py 一致）：**
+**集成模式：**
 - 类级变量 `_lama_instance` 缓存 LaMa 实例，跨任务复用
-- 首次调用时下载权重（~40MB，缓存到 `~/.cache/`）
-- 强制 `CPUExecutionProvider`
-- `_warmup()` 用 1x1 图片触发模型初始化
+- 首次调用按库默认逻辑加载模型
+- 推理失败后熔断，不影响后续请求可用性
 
-**降级策略：** `_get_or_create_lama()` 首次调用时如果抛出任何异常（import 失败、权重下载失败、推理报错），标记 `_lama_failed = True`，后续所有请求直接走 `cv2.inpaint`，不再重试。通过 progress_callback 提示用户"已降级到基础修复模式，效果可能降低"。
+**降级策略：**
+- `_get_or_create_lama()` 首次调用时，如果 import 或初始化抛异常，立即标记 `_lama_failed = True`；
+- LaMa 推理阶段如果抛异常，也立即标记 `_lama_failed = True`；
+- 标记后后续请求不再尝试 LaMa，直接走 `cv2.inpaint`；
+- manual 模式未提供遮罩时，回退自动检测并提示"未提供遮罩，已使用自动检测"。
 
 ### 参数变更
 
@@ -116,4 +119,4 @@ result = simple_lama(image, mask)  # PIL Image + 黑白遮罩
 | `backend/requirements.txt` | 新增 `simple-lama-inpainting` |
 | `backend/tests/test_watermark_processor.py` | 更新测试覆盖新逻辑 |
 | `frontend/src/components/MaskCanvas.vue` | 新增，canvas 画笔涂抹组件 |
-| `frontend/src/views/ImageTool.vue` | 集成 MaskCanvas 组件 |
+| `frontend/src/views/ToolWorkbench.vue` | 集成 MaskCanvas 组件 |

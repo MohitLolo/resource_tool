@@ -85,7 +85,9 @@ class WatermarkProcessor(BaseProcessor):
         mask_dilate = self._as_int(params.get("mask_dilate", 3)) or 3
 
         if mode == "manual":
-            mask = self._load_manual_mask(image, params)
+            mask, used_auto_fallback = self._load_manual_mask(image, params)
+            if used_auto_fallback:
+                progress_callback(20, "未提供遮罩，已使用自动检测")
         else:
             sensitivity = self._as_int(params.get("sensitivity", 70)) or 70
             mask = auto_detect_mask(image, sensitivity=sensitivity)
@@ -102,9 +104,13 @@ class WatermarkProcessor(BaseProcessor):
         return [str(output_path)]
 
     def _inpaint(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        cls = self.__class__
+        if cls._lama_failed:
+            return cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
         try:
             return self._inpaint_lama(image, mask)
         except Exception:
+            cls._lama_failed = True
             return cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
 
     def _inpaint_lama(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -138,12 +144,16 @@ class WatermarkProcessor(BaseProcessor):
             cls._lama_failed = True
             raise ImportError("simple-lama-inpainting not available") from exc
 
-        cls._lama_instance = SimpleLama()
+        try:
+            cls._lama_instance = SimpleLama()
+        except Exception:
+            cls._lama_failed = True
+            raise
         cls._lama_loaded = True
         cls._lama_failed = False
         return cls._lama_instance
 
-    def _load_manual_mask(self, image: np.ndarray, params: dict) -> np.ndarray:
+    def _load_manual_mask(self, image: np.ndarray, params: dict) -> tuple[np.ndarray, bool]:
         mask_path = self._resolve_mask_file(params)
         if mask_path:
             mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
@@ -151,8 +161,8 @@ class WatermarkProcessor(BaseProcessor):
                 raise ValueError(f"无法读取遮罩文件: {mask_path}")
             if mask.shape != image.shape[:2]:
                 raise ValueError("遮罩尺寸必须与输入图片一致")
-            return mask
-        return auto_detect_mask(image, sensitivity=70)
+            return mask, False
+        return auto_detect_mask(image, sensitivity=70), True
 
     def _resolve_mask_file(self, params: dict) -> str | None:
         extra_files = params.get("extra_files", {})

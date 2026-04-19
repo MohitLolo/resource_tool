@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import importlib
+import inspect
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -20,6 +23,14 @@ def test_watermark_processor_metadata() -> None:
     assert processor.name == "image.watermark"
     assert processor.label == "去水印"
     assert processor.category == "image"
+
+
+def test_simple_lama_api_contract() -> None:
+    module = importlib.import_module("simple_lama_inpainting")
+    simple_lama_class = getattr(module, "SimpleLama")
+    call_sig = inspect.signature(simple_lama_class.__call__)
+    params = list(call_sig.parameters.keys())
+    assert params[:3] == ["self", "image", "mask"]
 
 
 def test_validate_auto_mode() -> None:
@@ -141,6 +152,77 @@ def test_process_fallback_to_opencv(tmp_path, monkeypatch) -> None:
     assert len(outputs) == 1
     assert Path(outputs[0]).exists()
     assert len(calls) == 1
+
+
+def test_get_or_create_lama_marks_failed_on_constructor_error(monkeypatch) -> None:
+    processor = WatermarkProcessor()
+    WatermarkProcessor._lama_instance = None
+    WatermarkProcessor._lama_loaded = False
+    WatermarkProcessor._lama_failed = False
+
+    class BrokenLama:
+        def __init__(self):
+            raise RuntimeError("init failed")
+
+    fake_module = type("FakeModule", (), {"SimpleLama": BrokenLama})()
+    monkeypatch.setitem(sys.modules, "simple_lama_inpainting", fake_module)
+    importlib.invalidate_caches()
+
+    with pytest.raises(RuntimeError):
+        processor._get_or_create_lama()
+
+    assert WatermarkProcessor._lama_failed is True
+
+
+def test_inpaint_runtime_error_marks_lama_failed(monkeypatch) -> None:
+    processor = WatermarkProcessor()
+    WatermarkProcessor._lama_failed = False
+
+    calls: list[int] = []
+
+    def broken_inpaint_lama(_image, _mask):
+        calls.append(1)
+        raise RuntimeError("inference failed")
+
+    monkeypatch.setattr(processor, "_inpaint_lama", broken_inpaint_lama)
+    monkeypatch.setattr(
+        "app.processors.image.watermark.cv2.inpaint",
+        lambda image, _mask, _radius, _method: image,
+    )
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    mask = np.zeros((8, 8), dtype=np.uint8)
+    processor._inpaint(image, mask)
+    processor._inpaint(image, mask)
+
+    assert WatermarkProcessor._lama_failed is True
+    assert len(calls) == 1
+
+
+def test_process_manual_mode_without_mask_emits_fallback_message(tmp_path, monkeypatch) -> None:
+    processor = WatermarkProcessor()
+    input_file = tmp_path / "input.png"
+    _write_image(input_file, value=100)
+
+    from PIL import Image as PILImage
+
+    fake_pil = PILImage.fromarray(np.full((8, 8, 3), 100, dtype=np.uint8))
+    monkeypatch.setattr(processor, "_get_or_create_lama", lambda: MagicMock(return_value=fake_pil))
+    monkeypatch.setattr(
+        "app.processors.image.watermark.auto_detect_mask",
+        lambda _image, sensitivity=70: np.zeros((8, 8), dtype=np.uint8),
+    )
+
+    progress_events: list[tuple[int, str]] = []
+    outputs = processor.process(
+        input_file=str(input_file),
+        output_dir=str(tmp_path),
+        params={"mode": "manual"},
+        progress_callback=lambda p, m: progress_events.append((p, m)),
+    )
+
+    assert len(outputs) == 1
+    assert any("未提供遮罩" in message for _, message in progress_events)
 
 
 @pytest.mark.integration

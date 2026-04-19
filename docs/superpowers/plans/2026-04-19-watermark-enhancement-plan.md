@@ -4,9 +4,17 @@
 
 **Goal:** 用 LaMa 深度学习模型替换 OpenCV inpaint，提升水印修复质量；前端增加画笔涂抹交互。
 
-**Architecture:** 后端 watermark.py 重写检测层（FFT 频域分析 + 自适应阈值 + 边缘检测），修复层集成 simple-lama-inpainting（onnxruntime 推理，懒加载 + 类级缓存）。前端新增 MaskCanvas.vue 组件（原生 Canvas API 画笔涂抹），集成到 ToolWorkbench.vue。
+**Architecture:** 后端 watermark.py 重写检测层（FFT 频域分析 + 自适应阈值 + 边缘检测），修复层集成 simple-lama-inpainting（PyTorch 推理，懒加载 + 类级缓存 + 失败熔断）。前端新增 MaskCanvas.vue 组件（原生 Canvas API 画笔涂抹），集成到 ToolWorkbench.vue。
 
-**Tech Stack:** simple-lama-inpainting, onnxruntime, OpenCV (FFT/Canny/adaptiveThreshold), Canvas API, Vue 3
+**Tech Stack:** simple-lama-inpainting, PyTorch runtime, OpenCV (FFT/Canny/adaptiveThreshold), Canvas API, Vue 3
+
+## 评审修正（2026-04-19）
+
+- 依赖兼容性：`simple-lama-inpainting` 与 rembg 不共享 onnxruntime 依赖栈，冲突风险从“onnxruntime 版本冲突”调整为“PyTorch 体积与冷启动成本”。依赖固定为 `simple-lama-inpainting==0.1.2`，并增加 API 契约测试。
+- FFT 有效性：新增真实纹理背景+半透明平铺文字的集成测试，避免只在理想均匀底图上验证。
+- 降级策略：明确“首次 import/初始化异常或任意推理异常”都触发 `_lama_failed`，后续直接走 OpenCV，不再重试。
+- 前端遮罩：MaskCanvas 使用离屏 canvas 记录遮罩，显示层与导出层分离，不依赖颜色反推。
+- manual 参数行为：前端手动模式提交前必须确认遮罩；后端作为兜底，在缺失遮罩时回退自动检测并写入进度提示。
 
 ---
 

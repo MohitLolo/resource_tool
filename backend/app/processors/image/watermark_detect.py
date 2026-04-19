@@ -22,7 +22,7 @@ def auto_detect_mask(image: np.ndarray, sensitivity: int = 70) -> np.ndarray:
     return combined
 
 
-def detect_tiled_watermark(image: np.ndarray, peak_threshold: float = 0.78) -> np.ndarray:
+def detect_tiled_watermark(image: np.ndarray, peak_threshold: float = 0.60) -> np.ndarray:
     """通过 FFT 频域峰值检测平铺水印。"""
     gray = _to_gray(image)
     h, w = gray.shape
