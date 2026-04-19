@@ -21,6 +21,13 @@ class WatermarkProcessor(BaseProcessor):
             "default": "telea",
             "options": ["telea", "ns"],
         },
+        "sensitivity": {
+            "type": "number",
+            "label": "检测灵敏度",
+            "default": 70,
+            "min": 1,
+            "max": 100,
+        },
         "brush_size": {
             "type": "number",
             "label": "修复半径",
@@ -56,7 +63,7 @@ class WatermarkProcessor(BaseProcessor):
         if image is None:
             raise ValueError(f"Failed to read input image: {input_file}")
 
-        mask = self._load_mask(image, params)
+        mask = self._load_mask(image, params, sensitivity=int(params.get("sensitivity", 70)))
         progress_callback(70, "修复水印区域")
 
         brush_size = int(params.get("brush_size", 3))
@@ -72,7 +79,7 @@ class WatermarkProcessor(BaseProcessor):
     def _resolve_method(self, algorithm: str) -> int:
         return cv2.INPAINT_NS if algorithm.lower() == "ns" else cv2.INPAINT_TELEA
 
-    def _load_mask(self, image: np.ndarray, params: dict) -> np.ndarray:
+    def _load_mask(self, image: np.ndarray, params: dict, sensitivity: int = 70) -> np.ndarray:
         mask_file = self._resolve_mask_file(params)
         if mask_file:
             mask = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
@@ -81,7 +88,7 @@ class WatermarkProcessor(BaseProcessor):
             if mask.shape != image.shape[:2]:
                 raise ValueError("Mask shape must match input image size")
             return mask
-        return self._auto_detect_mask(image)
+        return self._auto_detect_mask(image, sensitivity=sensitivity)
 
     def _resolve_mask_file(self, params: dict) -> str | None:
         extra_files = params.get("extra_files", {})
@@ -101,9 +108,10 @@ class WatermarkProcessor(BaseProcessor):
 
         return None
 
-    def _auto_detect_mask(self, image: np.ndarray) -> np.ndarray:
-        # 阈值 240 更偏向识别浅色高亮水印，降低阈值会增加误检概率。
+    def _auto_detect_mask(self, image: np.ndarray, sensitivity: int = 70) -> np.ndarray:
+        # 灵敏度 1-100 映射到阈值 254-120，灵敏度越高阈值越低，检测范围越广
+        threshold = int(254 - (sensitivity / 100) * 134)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        _, mask = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
+        _, mask = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
         kernel = np.ones((3, 3), np.uint8)
         return cv2.dilate(mask, kernel, iterations=1)
