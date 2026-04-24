@@ -126,7 +126,9 @@ start_all() {
   ensure_cmd curl
   ensure_cmd pgrep
   ensure_cmd pkill
-  ensure_cmd redis-server
+  if ! is_running "${REDIS_PATTERN}"; then
+    ensure_cmd redis-server
+  fi
 
   start_redis
   start_api

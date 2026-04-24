@@ -30,5 +30,30 @@ if [[ "${PRECHECK_ONLY}" == "1" ]]; then
 fi
 
 LOGLEVEL="${CELERY_LOGLEVEL:-info}"
-echo "[worker] starting celery worker (loglevel=${LOGLEVEL})..."
-exec celery -A app.tasks.worker worker --loglevel="${LOGLEVEL}" "$@"
+MAX_RESTARTS="${MAX_RESTARTS:-5}"
+RESTART_DELAY="${RESTART_DELAY:-2}"
+restart_count=0
+
+while true; do
+  attempt=$((restart_count + 1))
+  echo "[worker] starting celery worker (attempt=${attempt}, loglevel=${LOGLEVEL}, pool=solo)..."
+  set +e
+  celery -A app.tasks.worker worker --loglevel="${LOGLEVEL}" -P solo "$@"
+  exit_code=$?
+  set -e
+
+  if [[ "${exit_code}" -eq 0 ]]; then
+    echo "[worker] exited normally"
+    exit 0
+  fi
+
+  restart_count=$((restart_count + 1))
+  echo "[worker] crashed with exit code ${exit_code}"
+  if [[ "${restart_count}" -ge "${MAX_RESTARTS}" ]]; then
+    echo "[worker] too many restarts (${restart_count}), giving up" >&2
+    exit "${exit_code}"
+  fi
+
+  echo "[worker] restarting in ${RESTART_DELAY}s..."
+  sleep "${RESTART_DELAY}"
+done
