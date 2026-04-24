@@ -13,6 +13,7 @@ from app.models.task import Task, TaskStatus, task_store
 from app.tasks.worker import process_task, publish_progress
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+IDEMPOTENCY_KEY_PREFIX = "task:idempotency:"
 
 
 def serialize_task(task: Task) -> dict:
@@ -38,17 +39,61 @@ def _save_upload(file: UploadFile) -> str:
     return str(destination)
 
 
+def _normalize_idempotency_key(raw_key: str | None) -> str | None:
+    if not isinstance(raw_key, str):
+        return None
+    key = raw_key.strip()
+    if not key:
+        return None
+    if len(key) > 128:
+        return key[:128]
+    return key
+
+
+def _idempotency_redis_key(normalized_key: str) -> str:
+    return f"{IDEMPOTENCY_KEY_PREFIX}{normalized_key}"
+
+
+def _find_reusable_task_id(normalized_key: str) -> str | None:
+    redis_key = _idempotency_redis_key(normalized_key)
+    raw = task_store.redis.get(redis_key)
+    if raw is None:
+        return None
+
+    task_id = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+    task = task_store.get(task_id)
+    if task is None:
+        task_store.redis.delete(redis_key)
+        return None
+    if task.status in {TaskStatus.FAILED, TaskStatus.CANCELED}:
+        task_store.redis.delete(redis_key)
+        return None
+    return task.id
+
+
+def _bind_idempotency_key(normalized_key: str, task_id: str) -> None:
+    redis_key = _idempotency_redis_key(normalized_key)
+    task_store.redis.setex(redis_key, settings.TASK_IDEMPOTENCY_TTL_SECONDS, task_id)
+
+
 @router.post("")
 async def create_task(
     input_file: UploadFile = File(...),
     extra_files: list[UploadFile] = File(default_factory=list),
     processor: str = Form(...),
     params: str = Form("{}"),
+    idempotency_key: str | None = Form(default=None),
 ) -> dict:
     try:
         parsed_params = json.loads(params)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid params JSON") from exc
+
+    normalized_key = _normalize_idempotency_key(idempotency_key)
+    if normalized_key is not None:
+        reusable_task_id = _find_reusable_task_id(normalized_key)
+        if reusable_task_id is not None:
+            return {"task_id": reusable_task_id, "reused": True}
 
     input_path = _save_upload(input_file)
     extra_file_map: dict[str, str] = {}
@@ -69,6 +114,8 @@ async def create_task(
         message="pending",
     )
     task_store.save(task)
+    if normalized_key is not None:
+        _bind_idempotency_key(normalized_key, task.id)
     process_task.delay(task.id)
     return {"task_id": task.id}
 
