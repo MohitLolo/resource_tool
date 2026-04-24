@@ -23,12 +23,27 @@ def _png_bytes(mode: str = "RGB") -> bytes:
     return buffer.getvalue()
 
 
+def _rgba_png_bytes(size: tuple[int, int], alpha: int = 255) -> bytes:
+    image = Image.new("RGBA", size, (255, 0, 0, alpha))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def test_cutout_processor_metadata_and_validate() -> None:
     processor = CutoutProcessor()
 
     assert processor.name == "image.cutout"
     assert processor.label == "智能抠图"
     assert processor.category == "image"
+    assert processor.params_schema["quality"]["default"] == "balanced"
+    assert processor.params_schema["quality"]["options"] == ["fast", "balanced", "high"]
+    assert processor.validate({}) is True
+    assert processor.validate({"quality": "fast"}) is True
+    assert processor.validate({"quality": "balanced"}) is True
+    assert processor.validate({"quality": "high"}) is True
+    assert processor.validate({"quality": "extreme"}) is False
+    assert processor.validate({"quality": ""}) is False
     assert processor.validate({}) is True
 
 
@@ -47,13 +62,14 @@ def test_process_calls_rembg_and_writes_rgba_png(tmp_path, monkeypatch) -> None:
         assert alpha_matting is True
         return expected_rgba
 
+    monkeypatch.setattr(processor, "_warmup_rembg", lambda: None)
     monkeypatch.setattr(processor, "_remove_background", fake_remove)
 
     events: list[int] = []
     outputs = processor.process(
         input_file=str(input_file),
         output_dir=str(output_dir),
-        params={"alpha_matting": True},
+        params={"alpha_matting": True, "quality": "balanced"},
         progress_callback=lambda progress, _message: events.append(progress),
     )
 
@@ -66,6 +82,62 @@ def test_process_calls_rembg_and_writes_rgba_png(tmp_path, monkeypatch) -> None:
     output_image = Image.open(output_path)
     assert output_image.mode == "RGBA"
     assert events[-1] == 100
+
+
+def test_process_resizes_large_image_for_balanced_quality_and_restores_output_size(tmp_path, monkeypatch) -> None:
+    processor = CutoutProcessor()
+    input_file = tmp_path / "large.png"
+    Image.new("RGB", (1000, 800), (255, 0, 0)).save(input_file)
+
+    captured = {}
+
+    def fake_remove(data: bytes, alpha_matting: bool = False):
+        image = Image.open(BytesIO(data))
+        captured["size"] = image.size
+        captured["alpha_matting"] = alpha_matting
+        return _rgba_png_bytes(image.size)
+
+    monkeypatch.setattr(processor, "_warmup_rembg", lambda: None)
+    monkeypatch.setattr(processor, "_remove_background", fake_remove)
+
+    outputs = processor.process(
+        input_file=str(input_file),
+        output_dir=str(tmp_path),
+        params={"quality": "balanced", "alpha_matting": False},
+        progress_callback=lambda _progress, _message: None,
+    )
+
+    assert captured["size"] == (768, 614)
+    assert max(captured["size"]) <= 768
+    output_image = Image.open(outputs[0])
+    assert output_image.size == (1000, 800)
+    assert output_image.mode == "RGBA"
+
+
+def test_process_uses_fast_quality_max_size_512(tmp_path, monkeypatch) -> None:
+    processor = CutoutProcessor()
+    input_file = tmp_path / "large-fast.png"
+    Image.new("RGB", (1000, 800), (255, 0, 0)).save(input_file)
+
+    captured = {}
+
+    def fake_remove(data: bytes, alpha_matting: bool = False):
+        image = Image.open(BytesIO(data))
+        captured["size"] = image.size
+        return _rgba_png_bytes(image.size)
+
+    monkeypatch.setattr(processor, "_warmup_rembg", lambda: None)
+    monkeypatch.setattr(processor, "_remove_background", fake_remove)
+
+    processor.process(
+        input_file=str(input_file),
+        output_dir=str(tmp_path),
+        params={"quality": "fast", "alpha_matting": False},
+        progress_callback=lambda _progress, _message: None,
+    )
+
+    assert captured["size"] == (512, 409)
+    assert max(captured["size"]) <= 512
 
 
 @pytest.mark.integration
@@ -82,7 +154,7 @@ def test_process_integration_with_real_rembg(tmp_path) -> None:
         outputs = processor.process(
             input_file=str(input_file),
             output_dir=str(tmp_path),
-            params={"alpha_matting": False},
+            params={"alpha_matting": False, "quality": "balanced"},
             progress_callback=lambda _progress, _message: None,
         )
     except Exception as exc:  # pragma: no cover - environment/network dependent

@@ -21,6 +21,12 @@ class CutoutProcessor(BaseProcessor):
     label = "智能抠图"
     category = "image"
     params_schema = {
+        "quality": {
+            "type": "select",
+            "label": "质量",
+            "default": "balanced",
+            "options": ["fast", "balanced", "high"],
+        },
         "alpha_matting": {
             "type": "checkbox",
             "label": "精细边缘",
@@ -28,9 +34,12 @@ class CutoutProcessor(BaseProcessor):
         }
     }
 
+    _QUALITY_SIZE = {"fast": 512, "balanced": 768, "high": 1024}
+
     def validate(self, params: dict) -> bool:
-        """抠图处理器当前无强约束参数。"""
-        return True
+        """校验质量参数。"""
+        quality = str(params.get("quality", "balanced")).lower()
+        return quality in self._QUALITY_SIZE
 
     def process(
         self,
@@ -40,21 +49,47 @@ class CutoutProcessor(BaseProcessor):
         progress_callback: ProgressCallback,
     ) -> list[str]:
         """执行抠图处理。"""
+        if not self.validate(params):
+            raise ValueError("参数无效")
+
+        quality = str(params.get("quality", "balanced")).lower()
+        max_size = self._QUALITY_SIZE[quality]
+
         progress_callback(5, "加载模型")
         self._warmup_rembg()
 
         progress_callback(10, "读取图片")
-        input_bytes = Path(input_file).read_bytes()
+        image = Image.open(input_file).convert("RGBA")
+        original_size = image.size
 
-        progress_callback(30, "移除背景")
+        # 大图先缩小再推理，避免 CPU 上推理时间过长
+        if max(original_size) > max_size:
+            progress_callback(15, "缩放图片")
+            scale = max_size / max(original_size)
+            inference_size = (int(original_size[0] * scale), int(original_size[1] * scale))
+            small_image = image.resize(inference_size, Image.Resampling.LANCZOS)
+        else:
+            inference_size = original_size
+            small_image = image
+
+        progress_callback(20, "移除背景")
+        buf = BytesIO()
+        small_image.save(buf, format="PNG")
         alpha_matting = bool(params.get("alpha_matting", False))
-        result = self._remove_background(input_bytes, alpha_matting=alpha_matting)
+        result = self._remove_background(buf.getvalue(), alpha_matting=alpha_matting)
 
-        progress_callback(85, "编码 PNG")
-        png_bytes = self._ensure_rgba_png_bytes(result)
+        progress_callback(80, "处理遮罩")
+        mask_image = self._to_mask(result)
+
+        # 缩放回原始尺寸
+        if inference_size != original_size:
+            mask_image = mask_image.resize(original_size, Image.Resampling.LANCZOS)
+
+        progress_callback(85, "合成输出")
+        output = Image.composite(image, Image.new("RGBA", original_size, (0, 0, 0, 0)), mask_image)
 
         output_path = Path(output_dir) / f"{Path(input_file).stem}_cutout.png"
-        output_path.write_bytes(png_bytes)
+        output.save(str(output_path), format="PNG")
 
         progress_callback(100, "完成")
         return [str(output_path)]
@@ -85,17 +120,15 @@ class CutoutProcessor(BaseProcessor):
     _warmup_done: set[tuple[str, tuple[str, ...], str]] = set()
     _sessions: dict[tuple[str, tuple[str, ...], str], Any] = {}
 
-    def _ensure_rgba_png_bytes(self, result: bytes | Image.Image | np.ndarray) -> bytes:
+    def _to_mask(self, result: bytes | Image.Image | np.ndarray) -> Image.Image:
+        """将 rembg 输出转为灰度遮罩（白色=前景，黑色=背景）。"""
         if isinstance(result, bytes):
-            image = Image.open(BytesIO(result)).convert("RGBA")
+            img = Image.open(BytesIO(result)).convert("RGBA")
         elif isinstance(result, Image.Image):
-            image = result.convert("RGBA")
+            img = result.convert("RGBA")
         else:
-            image = Image.fromarray(result).convert("RGBA")
-
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        return buffer.getvalue()
+            img = Image.fromarray(result).convert("RGBA")
+        return img.split()[3]  # alpha 通道即为遮罩
 
     def _remove_background(
         self,
@@ -158,6 +191,11 @@ class CutoutProcessor(BaseProcessor):
         legacy_model = legacy_home / "u2net.onnx"
         if legacy_model.exists():
             return str(legacy_home)
+
+        backend_home = Path(__file__).resolve().parents[3] / "data" / "models" / "u2net"
+        backend_model = backend_home / "u2net.onnx"
+        if backend_model.exists():
+            return str(backend_home)
 
         return str(configured_home)
 
