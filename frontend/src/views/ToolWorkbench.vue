@@ -47,6 +47,7 @@ const lastStableCategory = ref('image')
 
 const ws = useWebSocket('')
 const terminalStatuses = new Set(['completed', 'failed', 'canceled'])
+const ACTIVE_TASK_STORAGE_KEY = 'ga_active_task_v1'
 const processorIcons = {
   'image.watermark': '🩹',
   'image.cutout': '✂️',
@@ -99,6 +100,85 @@ const isImageMode = computed(() => currentCategory.value === 'image')
 const isManualWatermark = computed(
   () => selectedProcessorName.value === 'image.watermark' && params.value.mode === 'manual',
 )
+
+function hashString(input) {
+  let hash = 2166136261
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i)
+    hash +=
+      (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function buildIdempotencyKey(file, processorName, payloadParams) {
+  if (!file || !processorName) return ''
+  const signature = JSON.stringify({
+    p: processorName,
+    n: file.name || '',
+    s: file.size || 0,
+    m: file.lastModified || 0,
+    t: file.type || '',
+    params: payloadParams || {},
+  })
+  return `ga:${currentCategory.value}:${hashString(signature)}`
+}
+
+function persistActiveTask() {
+  if (!taskId.value || !running.value) return
+  const payload = {
+    taskId: taskId.value,
+    category: currentCategory.value,
+    processorName: selectedProcessorName.value,
+    savedAt: Date.now(),
+  }
+  sessionStorage.setItem(ACTIVE_TASK_STORAGE_KEY, JSON.stringify(payload))
+}
+
+function clearPersistedActiveTask() {
+  sessionStorage.removeItem(ACTIVE_TASK_STORAGE_KEY)
+}
+
+async function restoreActiveTaskIfNeeded() {
+  const raw = sessionStorage.getItem(ACTIVE_TASK_STORAGE_KEY)
+  if (!raw || taskId.value || running.value) return
+  let parsed = null
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    clearPersistedActiveTask()
+    return
+  }
+  if (!parsed?.taskId || parsed?.category !== currentCategory.value) return
+  if (parsed?.processorName && processors.value.some((item) => item.name === parsed.processorName)) {
+    selectedProcessorName.value = parsed.processorName
+  }
+
+  taskId.value = parsed.taskId
+  const ok = await refreshTask()
+  if (!ok || !taskInfo.value) {
+    clearPersistedActiveTask()
+    taskId.value = ''
+    return
+  }
+
+  if (terminalStatuses.has(taskInfo.value.status)) {
+    running.value = false
+    clearPersistedActiveTask()
+    buildResultSummary()
+    await previewAndCacheResult()
+    await loadSampledResultThumbs()
+    appendLog(`已恢复历史任务: ${taskId.value} (${taskInfo.value.status})`)
+    return
+  }
+
+  running.value = true
+  ws.progress.value = taskInfo.value.progress || 0
+  ws.message.value = taskInfo.value.message || '任务处理中'
+  ws.status.value = taskInfo.value.status || 'processing'
+  ws.connect(taskId.value)
+  appendLog(`已恢复未完成任务: ${taskId.value}`)
+}
 
 function appendLog(text) {
   if (!text) return
@@ -242,6 +322,7 @@ function resetCategoryState() {
     URL.revokeObjectURL(sourcePreview.value.src)
   }
   sourcePreview.value = { src: '', mimeType: '' }
+  clearPersistedActiveTask()
 }
 
 async function loadProcessors() {
@@ -383,6 +464,11 @@ async function submitTask() {
     return
   }
   const { payloadParams, extraFiles } = buildTaskPayload()
+  const idempotencyKey = buildIdempotencyKey(
+    selectedFile.value,
+    selectedProcessorName.value,
+    payloadParams,
+  )
 
   try {
     running.value = true
@@ -391,9 +477,14 @@ async function submitTask() {
       selectedProcessorName.value,
       payloadParams,
       extraFiles,
+      { idempotencyKey },
     )
     taskId.value = result.task_id
     appendLog(`任务已创建: ${taskId.value}`)
+    if (result.reused) {
+      appendLog('检测到重复提交，已复用已有任务')
+    }
+    persistActiveTask()
 
     ws.progress.value = 0
     ws.message.value = '任务已提交'
@@ -418,6 +509,7 @@ async function cancelTask() {
     appendLog(`任务取消失败: ${error}`)
   } finally {
     running.value = false
+    clearPersistedActiveTask()
     ws.disconnect()
     fallbackEnabled.value = false
     clearPoll()
@@ -468,6 +560,7 @@ watch(
 
     if (terminalStatuses.has(status)) {
       running.value = false
+      clearPersistedActiveTask()
       fallbackEnabled.value = false
       clearPoll()
       await refreshTask()
@@ -516,6 +609,7 @@ watch(
 onMounted(async () => {
   try {
     await loadProcessors()
+    await restoreActiveTaskIfNeeded()
   } catch (error) {
     pushNotice(`加载处理器失败: ${error}`)
   }

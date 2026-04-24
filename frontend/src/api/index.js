@@ -5,11 +5,14 @@ const api = axios.create({
   timeout: 120000,
 })
 
-function buildTaskFormData(inputFile, processor, params = {}, extraFiles = []) {
+function buildTaskFormData(inputFile, processor, params = {}, extraFiles = [], options = {}) {
   const formData = new FormData()
   formData.append('input_file', inputFile)
   formData.append('processor', processor)
   formData.append('params', JSON.stringify(params))
+  if (options.idempotencyKey) {
+    formData.append('idempotency_key', options.idempotencyKey)
+  }
 
   for (const file of extraFiles) {
     formData.append('extra_files', file)
@@ -24,8 +27,8 @@ export async function getProcessors(category = '') {
   return data
 }
 
-export async function createTask(inputFile, processor, params = {}, extraFiles = []) {
-  const formData = buildTaskFormData(inputFile, processor, params, extraFiles)
+export async function createTask(inputFile, processor, params = {}, extraFiles = [], options = {}) {
+  const formData = buildTaskFormData(inputFile, processor, params, extraFiles, options)
   const { data } = await api.post('/tasks', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
