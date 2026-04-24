@@ -7,6 +7,11 @@ cd "${BACKEND_DIR}"
 
 export PYTHONPATH="${PYTHONPATH:-.}"
 
+CONDA_ENV="${CONDA_ENV:-gameasset}"
+if ! command -v python &>/dev/null && command -v conda &>/dev/null; then
+  eval "$(conda shell.bash hook)" && conda activate "${CONDA_ENV}"
+fi
+
 PRECHECK_ONLY=0
 if [[ "${1:-}" == "--precheck-only" ]]; then
   PRECHECK_ONLY=1
@@ -19,9 +24,14 @@ if [[ -n "${REDIS_URL:-}" ]]; then
 fi
 
 echo "[precheck] checking celery redis transport keys..."
-if ! python scripts/check_celery_redis_state.py "${REDIS_ARGS[@]}"; then
-  echo "[precheck] detected stale/wrong-type keys, applying fix..."
-  python scripts/check_celery_redis_state.py "${REDIS_ARGS[@]}" --fix
+PYTHON_BIN="${PYTHON:-python}"
+if command -v "${PYTHON_BIN}" &>/dev/null; then
+  if ! "${PYTHON_BIN}" scripts/check_celery_redis_state.py "${REDIS_ARGS[@]}"; then
+    echo "[precheck] detected stale/wrong-type keys, applying fix..."
+    "${PYTHON_BIN}" scripts/check_celery_redis_state.py "${REDIS_ARGS[@]}" --fix
+  fi
+else
+  echo "[precheck] python not found in PATH, skipping check"
 fi
 
 if [[ "${PRECHECK_ONLY}" == "1" ]]; then
