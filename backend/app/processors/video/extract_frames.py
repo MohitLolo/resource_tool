@@ -96,8 +96,8 @@ class ExtractFramesProcessor(BaseProcessor):
 
         command = ["ffmpeg", "-y"]
         if mode == "range":
-            start = float(params["start"])
-            end = float(params["end"])
+            start = float(params.get("start", 0))
+            end = float(params.get("end", 1))
             command.extend(["-ss", str(start), "-to", str(end)])
 
         command.extend(

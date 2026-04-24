@@ -367,6 +367,11 @@ function onMaskClear() {
 
 function buildTaskPayload() {
   const payloadParams = { ...params.value }
+  for (const [key, config] of Object.entries(paramsSchema.value)) {
+    if (payloadParams[key] === undefined && config.default !== undefined) {
+      payloadParams[key] = config.default
+    }
+  }
   const extraFiles = []
 
   for (const [key, file] of Object.entries(extraFileMap.value)) {
